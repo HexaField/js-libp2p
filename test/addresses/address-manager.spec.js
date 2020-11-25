@@ -3,23 +3,28 @@
 
 const { expect } = require('aegir/utils/chai')
 const multiaddr = require('multiaddr')
+const PeerId = require('peer-id')
 
 const AddressManager = require('../../src/address-manager')
 const peerUtils = require('../utils/creators/peer')
+
+const Peers = require('../fixtures/peers')
 
 const listenAddresses = ['/ip4/127.0.0.1/tcp/15006/ws', '/ip4/127.0.0.1/tcp/15008/ws']
 const announceAddreses = ['/dns4/peer.io']
 
 describe('Address Manager', () => {
+  const peerId = PeerId.createFromJSON(Peers[0])
+
   it('should not need any addresses', () => {
-    const am = new AddressManager()
+    const am = new AddressManager(peerId)
 
     expect(am.listen.size).to.equal(0)
     expect(am.announce.size).to.equal(0)
   })
 
   it('should return listen multiaddrs on get', () => {
-    const am = new AddressManager({
+    const am = new AddressManager(peerId, {
       listen: listenAddresses
     })
 
@@ -33,7 +38,7 @@ describe('Address Manager', () => {
   })
 
   it('should return announce multiaddrs on get', () => {
-    const am = new AddressManager({
+    const am = new AddressManager(peerId, {
       listen: listenAddresses,
       announce: announceAddreses
     })
