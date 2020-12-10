@@ -14,7 +14,11 @@ const listenAddresses = ['/ip4/127.0.0.1/tcp/15006/ws', '/ip4/127.0.0.1/tcp/1500
 const announceAddreses = ['/dns4/peer.io']
 
 describe('Address Manager', () => {
-  const peerId = PeerId.createFromJSON(Peers[0])
+  let peerId
+
+  before(async () => {
+    peerId = await PeerId.createFromJSON(Peers[0])
+  })
 
   it('should not need any addresses', () => {
     const am = new AddressManager(peerId)
@@ -49,6 +53,57 @@ describe('Address Manager', () => {
     const announceMultiaddrs = am.getAnnounceAddrs()
     expect(announceMultiaddrs.length).to.equal(1)
     expect(announceMultiaddrs[0].equals(multiaddr(announceAddreses[0]))).to.equal(true)
+  })
+
+  it('should add observed addresses', () => {
+    const am = new AddressManager(peerId)
+
+    expect(am.observed).to.be.empty()
+
+    am.addObservedAddr('/ip4/123.123.123.123/tcp/39201')
+
+    expect(am.observed).to.have.property('size', 1)
+  })
+
+  it('should dedupe added observed addresses', () => {
+    const ma = '/ip4/123.123.123.123/tcp/39201'
+    const am = new AddressManager(peerId)
+
+    expect(am.observed).to.be.empty()
+
+    am.addObservedAddr(ma)
+    am.addObservedAddr(ma)
+    am.addObservedAddr(ma)
+
+    expect(am.observed).to.have.property('size', 1)
+    expect(am.observed).to.include(ma)
+  })
+
+  it('should strip our peer address from added observed addresses', () => {
+    const ma = '/ip4/123.123.123.123/tcp/39201'
+    const am = new AddressManager(peerId)
+
+    expect(am.observed).to.be.empty()
+
+    am.addObservedAddr(ma)
+    am.addObservedAddr(`${ma}/p2p/${peerId}`)
+
+    expect(am.observed).to.have.property('size', 1)
+    expect(am.observed).to.include(ma)
+  })
+
+  it('should strip our peer address from added observed addresses in difference formats', () => {
+    const ma = '/ip4/123.123.123.123/tcp/39201'
+    const am = new AddressManager(peerId)
+
+    expect(am.observed).to.be.empty()
+
+    am.addObservedAddr(ma)
+    am.addObservedAddr(`${ma}/p2p/${peerId}`) // base32 CID
+    am.addObservedAddr(`${ma}/p2p/${peerId.toB58String()}`) // base58btc
+
+    expect(am.observed).to.have.property('size', 1)
+    expect(am.observed).to.include(ma)
   })
 })
 
