@@ -7,28 +7,26 @@ const AddressManager = require('../../src/address-manager')
 const TransportManager = require('../../src/transport-manager')
 const Transport = require('libp2p-tcp')
 const mockUpgrader = require('../utils/mockUpgrader')
-const addrs = [
-  '/ip4/127.0.0.1/tcp/0',
-  '/ip4/0.0.0.0/tcp/0'
-]
 const NatManager = require('../../src/nat-manager')
 const delay = require('delay')
 const peers = require('../fixtures/peers')
 const PeerId = require('peer-id')
 
-describe('Nat Manager (TCP)', () => {
-  let peerId
-  let am
-  let tm
-  let nm
+const DEFAULT_ADDRESSES = [
+  '/ip4/127.0.0.1/tcp/0',
+  '/ip4/0.0.0.0/tcp/0'
+]
 
-  beforeEach(async () => {
-    peerId = await PeerId.createFromJSON(peers[0])
-    am = new AddressManager(peerId, { listen: addrs })
-    tm = new TransportManager({
+describe('Nat Manager (TCP)', () => {
+  const teardown = []
+
+  async function createNatManager (addrs = DEFAULT_ADDRESSES, natManagerOptions = {}) {
+    const peerId = await PeerId.createFromJSON(peers[0])
+    const addressManager = new AddressManager(peerId, { listen: addrs })
+    const transportManager = new TransportManager({
       libp2p: {
         peerId,
-        addressManager: am,
+        addressManager,
         peerStore: {
           addressBook: {
             consumePeerRecord: sinon.stub()
@@ -36,50 +34,72 @@ describe('Nat Manager (TCP)', () => {
         }
       },
       upgrader: mockUpgrader,
-      onConnection: () => {}
+      onConnection: () => {},
+      faultTolerance: TransportManager.FaultTolerance.NO_FATAL
     })
-    nm = new NatManager({
+    const natManager = new NatManager({
       peerId,
-      addressManager: am,
-      transportManager: tm,
-      enabled: true
+      addressManager,
+      transportManager,
+      enabled: true,
+      ...natManagerOptions
     })
 
-    tm.add(Transport.prototype[Symbol.toStringTag], Transport)
-    await tm.listen(am.getListenAddrs())
-  })
-
-  afterEach(async () => {
-    await nm.stop()
-    await tm.removeAll()
-    expect(tm._transports.size).to.equal(0)
-  })
-
-  it('should map TCP connections to external ports', async () => {
-    nm._client = {
+    natManager._client = {
       externalIp: sinon.stub().resolves('82.3.1.5'),
       map: sinon.stub(),
       destroy: sinon.stub()
     }
 
-    let observed = am.getObservedAddrs().map(ma => ma.toString())
+    transportManager.add(Transport.prototype[Symbol.toStringTag], Transport)
+    await transportManager.listen(addressManager.getListenAddrs())
+
+    teardown.push(async () => {
+      await natManager.stop()
+      await transportManager.removeAll()
+      expect(transportManager._transports.size).to.equal(0)
+    })
+
+    return {
+      natManager,
+      addressManager,
+      transportManager
+    }
+  }
+
+  afterEach(() => Promise.all(teardown))
+
+  it('should map TCP connections to external ports', async () => {
+    const {
+      natManager,
+      addressManager,
+      transportManager
+    } = await createNatManager()
+
+    natManager._client = {
+      externalIp: sinon.stub().resolves('82.3.1.5'),
+      map: sinon.stub(),
+      destroy: sinon.stub()
+    }
+
+    let observed = addressManager.getObservedAddrs().map(ma => ma.toString())
     expect(observed).to.be.empty()
 
-    await nm._start()
+    await natManager._start()
 
-    observed = am.getObservedAddrs().map(ma => ma.toString())
+    observed = addressManager.getObservedAddrs().map(ma => ma.toString())
     expect(observed).to.not.be.empty()
 
-    const internalPorts = tm.getAddrs()
+    const internalPorts = transportManager.getAddrs()
       .filter(ma => ma.isThinWaistAddress())
       .map(ma => ma.toOptions())
       .filter(({ host, transport }) => host !== '127.0.0.1' && transport === 'tcp')
       .map(({ port }) => port)
 
-    expect(nm._client.map.called).to.be.true()
+    expect(natManager._client.map.called).to.be.true()
 
     internalPorts.forEach(port => {
-      expect(nm._client.map.getCall(0).args[0]).to.include({
+      expect(natManager._client.map.getCall(0).args[0]).to.include({
         privatePort: port,
         protocol: 'TCP'
       })
@@ -87,42 +107,121 @@ describe('Nat Manager (TCP)', () => {
   })
 
   it('should not map TCP connections when double-natted', async () => {
-    nm._client = {
-      externalIp: sinon.stub().resolves('192.168.1.1'),
-      map: sinon.stub(),
-      destroy: sinon.stub()
-    }
+    const {
+      natManager,
+      addressManager
+    } = await createNatManager()
 
-    let observed = am.getObservedAddrs().map(ma => ma.toString())
+    natManager._client.externalIp = sinon.stub().resolves('192.168.1.1')
+
+    let observed = addressManager.getObservedAddrs().map(ma => ma.toString())
     expect(observed).to.be.empty()
 
-    await expect(nm._start()).to.eventually.be.rejectedWith(/double NAT/)
+    await expect(natManager._start()).to.eventually.be.rejectedWith(/double NAT/)
 
-    observed = am.getObservedAddrs().map(ma => ma.toString())
+    observed = addressManager.getObservedAddrs().map(ma => ma.toString())
     expect(observed).to.be.empty()
 
-    expect(nm._client.map.called).to.be.false()
+    expect(natManager._client.map.called).to.be.false()
   })
 
   it('should do nothing when disabled', async () => {
-    nm = new NatManager({
-      peerId: 'peer-id',
-      addressManager: am,
-      transportManager: tm,
+    const {
+      natManager
+    } = await createNatManager(DEFAULT_ADDRESSES, {
       enabled: false
     })
 
-    nm._client = {
-      externalIp: sinon.stub().resolves('82.3.1.5'),
-      map: sinon.stub(),
-      destroy: sinon.stub()
-    }
-
-    nm.start()
+    natManager.start()
 
     await delay(100)
 
-    expect(nm._client.externalIp.called).to.be.false()
-    expect(nm._client.map.called).to.be.false()
+    expect(natManager._client.externalIp.called).to.be.false()
+    expect(natManager._client.map.called).to.be.false()
+  })
+
+  it('should not map non-ipv4 connections to external ports', async () => {
+    const {
+      natManager,
+      addressManager
+    } = await createNatManager([
+      '/ip6/::/tcp/5001'
+    ])
+
+    let observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+
+    await natManager._start()
+
+    observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+  })
+
+  it('should not map non-ipv6 loopback connections to external ports', async () => {
+    const {
+      natManager,
+      addressManager
+    } = await createNatManager([
+      '/ip6/::1/tcp/5001'
+    ])
+
+    let observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+
+    await natManager._start()
+
+    observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+  })
+
+  it('should not map non-TCP connections to external ports', async () => {
+    const {
+      natManager,
+      addressManager
+    } = await createNatManager([
+      '/ip4/0.0.0.0/utp'
+    ])
+
+    let observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+
+    await natManager._start()
+
+    observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+  })
+
+  it('should not map loopback connections to external ports', async () => {
+    const {
+      natManager,
+      addressManager
+    } = await createNatManager([
+      '/ip4/127.0.0.1/tcp/5900'
+    ])
+
+    let observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+
+    await natManager._start()
+
+    observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+  })
+
+  it('should not map non-thin-waist connections to external ports', async () => {
+    const {
+      natManager,
+      addressManager
+    } = await createNatManager([
+      '/ip4/0.0.0.0/tcp/5900/sctp/49832'
+    ])
+
+    let observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
+
+    await natManager._start()
+
+    observed = addressManager.getObservedAddrs().map(ma => ma.toString())
+    expect(observed).to.be.empty()
   })
 })
