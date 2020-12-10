@@ -1,9 +1,5 @@
 'use strict'
 
-const debug = require('debug')
-const log = debug('libp2p:addresses')
-log.error = debug('libp2p:addresses:error')
-
 const { EventEmitter } = require('events')
 const multiaddr = require('multiaddr')
 const PeerId = require('peer-id')
