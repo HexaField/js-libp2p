@@ -18,6 +18,10 @@ const pkg = require('../package.json')
  * @typedef {import('./address-manager')} AddressManager
  */
 
+function highPort (min = 1024, max = 65535) {
+  return Math.floor(Math.random() * (max - min + 1) + min)
+}
+
 class NatManager {
   /**
    * @class
@@ -94,10 +98,12 @@ class NatManager {
         throw new Error(`${publicIp} is private - please set config.nat.externalIp to an externally routable IP or ensure you are not behind a double NAT`)
       }
 
-      log(`opening uPnP connection from ${publicIp}:${port} to ${host}:${port}`)
+      const publicPort = highPort()
+
+      log(`opening uPnP connection from ${publicIp}:${publicPort} to ${host}:${port}`)
 
       await client.map({
-        publicPort: port,
+        publicPort,
         privatePort: port,
         protocol: transport.toUpperCase()
       })
@@ -105,7 +111,7 @@ class NatManager {
       this._addressManager.addObservedAddr(Multiaddr.fromNodeAddress({
         family: 'IPv4',
         address: publicIp,
-        port: `${port}`
+        port: `${publicPort}`
       }, transport))
     }
   }
