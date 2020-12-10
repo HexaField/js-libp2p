@@ -3,7 +3,6 @@
 const { EventEmitter } = require('events')
 const multiaddr = require('multiaddr')
 const PeerId = require('peer-id')
-const multibase = require('multibase')
 
 /**
  * @typedef {import('multiaddr')} Multiaddr
@@ -74,15 +73,7 @@ class AddressManager extends EventEmitter {
 
     // strip our peer id if it has been passed
     if (remotePeer) {
-      let remotePeerId
-
-      // decode remote peer id if it has a multibase prefix
-      if (multibase.isEncoded(remotePeer)) {
-        remotePeerId = PeerId.createFromBytes(multibase.decode(remotePeer))
-      } else {
-        // otherwise treat as implicit base58btc
-        remotePeerId = PeerId.createFromB58String(remotePeer)
-      }
+      const remotePeerId = PeerId.createFromB58String(remotePeer)
 
       // use same encoding for comparison
       if (remotePeerId.toString() === this.peerId.toString()) {
